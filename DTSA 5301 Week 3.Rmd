@@ -1,0 +1,239 @@
+---
+title: "DTSA 5301 Week 3 - NYC Shootings and NYC Sports"
+date: "2023-05-30"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+library(tidyverse)
+library(lubridate)
+```
+
+## Data Import
+
+We will import data from the NYC Open Data project about historical NYC shooting incidents going back to 2006.  More information about this data set can be found here:
+
+https://data.cityofnewyork.us/Public-Safety/NYPD-Shooting-Incident-Data-Historic-/833y-fsy8
+
+```{r import}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+shootings <- read_csv(url)
+```
+## Data Summary
+
+Here is a sample of the data and a summary:
+
+```{r summary}
+shootings
+summary(shootings)
+```
+
+## Tidy Up the Data
+
+We will focus on shootings over time and by NYC borough in this analysis.  To that end, we will tidy up the occurrence date and borough data, converting the occurrence date text to a date value, and converting the borough data to an R factor (category) value.
+
+```{r tidy}
+shootings <- shootings %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+shootings$BORO <- as.factor(shootings$BORO)
+```
+
+## Initial Visualizations
+
+Let's look at a line graph of shootings in NYC by year and by borough.
+
+### NYC Shootings By Year
+
+```{r viz}
+shootings_by_year <- shootings %>%
+  mutate(year = year(OCCUR_DATE)) %>%
+  group_by(year) %>%
+  summarize(num_shootings = n()) %>%
+  select(year, num_shootings) %>%
+  ungroup()
+
+ggplot(shootings_by_year, aes(year, num_shootings)) +
+  geom_line() +
+  ggtitle("NYC Shootings By Year")
+```
+
+### NYC Shootings By Year By Borough
+
+```{r viz_boro}
+shootings_by_year_by_boro <- shootings %>%
+  mutate(year = year(OCCUR_DATE)) %>%
+  group_by(year, BORO) %>%
+  summarize(num_shootings = n()) %>%
+  select(year, BORO, num_shootings) %>%
+  ungroup()
+
+ggplot(shootings_by_year_by_boro, aes(year, num_shootings, color=BORO)) +
+  geom_line() + 
+  ggtitle("Shootings By Borough")
+
+```
+
+## Analysis of NYC Shootings vs NYC Sports
+
+We can see that the number of shootings in NYC differs significantly over time by borough, even though there is a general trend followed by all boroughs.  Is it possible that shootings in NYC boroughs are correlated to the results of their associated pro sports teams?
+
+Let's import historical season results for the Yankees, and compare them to shootings in the Bronx (where the Yankees play their home games).
+
+### Import and Tidy Yankees Data
+
+I got this data from Retro Seasons website.  More about this data can be found here:
+
+https://www.retroseasons.com/teams/new-york/
+
+I added it to my Google drive for download in R, since the Retro Seasons website didn't have a direct download link.  We'll convert the Season data to an integer Year to join to the shootings data, and convert wins and loses to integers so we can compute a winning percentage.
+
+```{r import_yankees}
+knitr::opts_chunk$set(message=FALSE, warnings=FALSE)
+google_base_url <- "https://docs.google.com/uc?export=download&id="
+yankees <- read_csv(paste(google_base_url, "1ivj-zVHflh8s0sxJXYMs48HbERQ6LK6q", sep =""))
+yankees <- yankees %>%
+  mutate(year = as.integer(Season)) %>%
+  mutate(wins = as.integer(W)) %>%
+  mutate(losses = as.integer(L)) %>%
+  mutate(win_pct = wins / (wins + losses))
+```
+
+### Yankees historical winning percentages:
+
+Here's a look at the Yankees historical winning percentages for the time period in which we've got NYC shootings data:
+
+```{r viz_yankees}
+
+yankees %>% filter(year >= 2006) %>%
+  ggplot() + 
+  geom_line(aes(year, win_pct), color = "black") +
+  ggtitle("Yankees Win Pct")
+```
+
+### Modeling
+
+Let's create a linear model that correlates shootings in the Bronx to Yankees win percentage, by year.
+
+```{r model}
+shootings_in_bronx <- shootings_by_year_by_boro %>% 
+  filter(BORO == "BRONX") %>% 
+  inner_join(yankees, by="year")
+
+mod <- lm(num_shootings ~ win_pct, data = shootings_in_bronx)
+summary(mod)
+```
+
+Based on the summary (r-squared and p-value), it does not look like there is a reliable (linear) correlation.
+
+### Predication Visualization
+
+Here's a plot of shootings in the Bronx (in Red), along with the predicted number of shootings based on our linear model (in Blue):
+
+``` {r pred_plot}
+shootings_in_bronx <- shootings_in_bronx %>% mutate(pred = predict(mod))
+
+shootings_in_bronx %>% ggplot() + 
+  geom_line(aes(year, num_shootings), color = "red") +
+  geom_line(aes(year, pred), color = "blue") +
+  ggtitle("Shootings in Bronx (Red) Vs Yankees Prediction (Blue)")
+
+```
+
+As we can see, no real correlation appears.
+
+## Trying the Model with Other Boroughs and Sports teams
+
+It seems there's no correlation between shootings in the Bronx and the Yankees winning percentage, but what about other boroughs and other NYC sports teams?  Let's test out the model against a couple of other pairings.
+
+### The Knicks and Manhattan
+
+Here's the same linear model applied to historical winning percentage data from the New York Knicks (basketball team), against shootings data from Manhattan (where the Knicks play their home games).
+
+
+```{r knicks}
+knicks <- read_csv(paste(google_base_url, "1kL3w1Ir2EovawmJl-1xtBVNzRsoJRO92", sep =""))
+knicks <- knicks %>% 
+  mutate(year = as.integer(str_sub(Season, 1, 4))) %>%
+  mutate(wins = as.integer(W)) %>%
+  mutate(losses = as.integer(L)) %>%
+  mutate(win_pct = wins / (wins + losses))
+
+knicks %>% filter(year >= 2006) %>% 
+  ggplot() + 
+  geom_line(aes(year, win_pct), color = "black") +
+  ggtitle("Knicks Win Pct")
+
+shootings_in_MANHATTAN <- shootings_by_year_by_boro %>% 
+  filter(BORO == "MANHATTAN") %>% 
+  inner_join(knicks, by="year")
+
+mod_knicks <- lm(num_shootings ~ win_pct, data = shootings_in_MANHATTAN)
+summary(mod_knicks)
+
+shootings_in_MANHATTAN <- shootings_in_MANHATTAN %>% mutate(pred = predict(mod_knicks))
+
+shootings_in_MANHATTAN %>% ggplot() + 
+  geom_line(aes(year, num_shootings), color = "red") +
+  geom_line(aes(year, pred), color = "blue") +
+  ggtitle("Shootings in Manhattan (Red) Vs Knicks Prediction (Blue)")
+
+```
+
+In this case, we get stronger results.  There _may_ be a correlation between Knicks' results and Manhattan shootings.  The R-squared and p-value are better than in the Yankees/Bronx analysis, but still not particularly compelling.  My sense is that this is a somewhat spurious result, and that there is no actually significant correlation between these variables.
+
+### The Mets and Queens
+
+In the spirit of sports, let's run this model one more time as a tie-breaker.  This time we'll use the New York Mets (baseball) results and shootings in their borough of Queens.
+
+```{r mets}
+mets <- read_csv(paste(google_base_url, "1xibGlv4cRvLZXeCK7MRIOAw6gLL-RoqA", sep =""))
+mets <- mets %>% 
+  mutate(year = as.integer(Season)) %>%
+  mutate(wins = as.integer(W)) %>%
+  mutate(losses = as.integer(L)) %>%
+  mutate(win_pct = wins / (wins + losses))
+
+mets %>% filter(year >= 2006) %>% 
+  ggplot() + 
+  geom_line(aes(year, win_pct), color = "black") +
+  ggtitle("Mets Win Pct")
+
+shootings_in_QUEENS <- shootings_by_year_by_boro %>% 
+  filter(BORO == "QUEENS") %>% 
+  inner_join(mets, by="year")
+
+mod_mets <- lm(num_shootings ~ win_pct, data = shootings_in_QUEENS)
+summary(mod_mets)
+
+shootings_in_QUEENS <- shootings_in_QUEENS %>% mutate(pred = predict(mod_mets))
+
+shootings_in_QUEENS %>% ggplot() + 
+  geom_line(aes(year, num_shootings), color = "red") +
+  geom_line(aes(year, pred), color = "blue") +
+  ggtitle("Shootings in Queens (Red) Vs Mets Prediction (Blue)")
+
+```
+
+And again, no real correlation exists between Queens shootings and New York Mets results.  
+
+## Conclusion
+
+So, we saw no correlation between the NYC baseball teams' winning percentage and their corresponding boroughs' shooting incidents.  We did see a slight correlation between The Knicks basketball team performance and shootings in Manhattan.  Perhaps New Yorkers care more about their basketball teams than their baseball teams?  I doubt it - I'd chalk the Knicks/Manhattan model results up to coincidence, given the other data.
+
+**Based on this analysis, I'd have to conclude that there is no significant statistical correlation between shootings in New York and the results of New York pro sports teams.**
+
+## Mitigating Bias
+
+There are a number of places in this analysis where my personal bias might be affecting the results.  To start with, which sports teams to choose?  I initially chose the Yankees, arguably New York's most popular team.  I attempted to mitigate this selection bias by trying the model on other teams and boroughs.  But this was not exhaustive.  I used data about particular NYC sports teams (Yankees, Knicks, Mets) and not others (Giants, Jets, Islanders).  Perhaps I have a bias for baseball and basketball over football and hockey?  Part of the problem here is that certain New York teams (Giants, Jets) actually play in New Jersey, so I left those out.
+
+Additionally, I used only Men's sports teams, no Women's sports teams.  I didn't have Women's sports team data at hand, sadly.
+
+I also chose to focus on individual boroughs rather than all of NYC.  Perhaps the correlation is more widely focused, and aggregating all NYC sports teams results together would correlate to overall NYC shootings.
+
+Additionally, there could be non-linear correlations at play, and I only tested a linear model.
+
+Clearly, there are lots of ways to expand this analysis to remove bias and look for correlations that we did not find in this particular iteration of the project.  I'll save that for a future project.
+
+```{r sessionInfo}
+sessionInfo()
+```
